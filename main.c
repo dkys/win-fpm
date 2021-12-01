@@ -7,19 +7,112 @@
  * */
 #include <stdio.h>
 #include <pthread.h>
+#include <getopt.h>
+#include <stdlib.h>
+#include <winsock2.h>
 #include <windows.h>
+#include <wininet.h>
 
+#pragma comment(lib, "ws2_32.lib")
+#define MAX_PROCESSES 1024
 pthread_t threads[10];
 HANDLE FcpJobObject;
-char *CMD = "E:\\wnmp\\php\\php-cgi.exe -b 127.0.0.1:9000";
+int number = 3;
+char *ip = "127.0.0.1";
+int port = 9000;
+char *user;
+char *path;
+struct sockaddr_in listen_addr;
+int listen_fd;
+static struct option long_options[] = {
+        {"help",    no_argument,       NULL, 'h'},
+        {"version", no_argument,       NULL, 'v'},
+        {"number",  required_argument, NULL, 'n'},
+        {"ip",      required_argument, NULL, 'i'},
+        {"port",    required_argument, NULL, 'p'},
+//        {"user",    required_argument, NULL, 'u'},
+//        {"group",   required_argument, NULL, 'g'},
+//        {"root",    required_argument, NULL, 'r'},
+        {NULL,      0,                 NULL, 0}
+};
 
+
+static void usage() {
+    fprintf(stdout, ""
+                    "Usage: xxfpm path [-n number] [-i ip] [-p port]\n"
+                    "Manage FastCGI processes.\n"
+                    "\n"
+                    " -h, --help    output usage information and exit\n"
+                    " -v, --version output version information and exit\n"
+                    " -n, --number  number of processes to keep\n"
+                    " -i, --ip      ip address to bind\n"
+                    " -p, --port    port to bind, default is 8000\n"
+//                    " -u, --user    start processes using specified linux user\n"
+//                    " -r, --root    change root direcotry for the processes"
+    );
+}
+
+static void showVersion() {
+    fprintf(stdout, ""
+                    "xxfpm Revision: 0.01\n"
+                    "FastCGI Process Manager\n"
+                    "Copyright 2021 qq673675158\n"
+                    "Compiled on %s\n", __DATE__
+    );
+    exit(0);
+}
+
+void listenAndBind() {
+    //初始化WSA
+    WORD sockVersion = MAKEWORD(2, 2);
+    WSADATA wsaData;
+    /*
+     * WSAStartup:  启动windows异步套接字(只有启动了该程序 才能进一步调用windows socket)
+     * 参数sockVersion: socket 版本
+     * 参数wsaData : 指向WSADATA数据结构的指针，该数据结构将接收Windows套接字实现的详细信息
+     * */
+    if (WSAStartup(sockVersion, &wsaData) != 0) {
+        exit(EXIT_FAILURE);
+    }
+
+    if ((listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+        fprintf(stderr, "failed socket %d\n", listen_fd);
+        exit(EXIT_FAILURE);
+    }
+    listen_addr.sin_family = AF_INET;
+    listen_addr.sin_addr.s_addr = inet_addr(ip);
+    listen_addr.sin_port = htons(port);
+    if (-1 == bind(listen_fd, (struct sockaddr *) &listen_addr, sizeof(struct sockaddr_in))) {
+        fprintf(stderr, "failed bind ip %s,port %d\n", ip, port);
+        exit(EXIT_FAILURE);
+    }
+    listen(listen_fd, MAX_PROCESSES);
+}
+
+/**
+ * dwFlags
+ * STARTF_USESIZE					//使用dwXSize 和dwYSize 成员
+ * STARTF_USESHOWWINDOW				//使用wShowWindow 成员
+ * STARTF_USEPOSITION				//使用dwX 和dwY 成员
+ * STARTF_USECOUNTCHARS             //使用dwXCountChars 和dwYCount Chars 成员
+ * STARTF_USEFILLATTRIBUTE			//使用dwFillAttribute 成员
+ * STARTF_USESTDHANDLES				//使用hStdInput 、hStdOutput 和hStdError 成员
+ * STARTF_RUN_FULLSCREEN			//强制在x86 计算机上运行的控制台应用程序以全屏幕方式启动运行
+ * @return
+ */
 void *startProcess() {
     while (1) {
-        STARTUPINFO si = {sizeof(si)}; //记录结构体有多大，必须要参数
         PROCESS_INFORMATION pi;    //进程id，进程句柄，线程id，线程句柄存在于这个结构体
-//        printf("sub ID: %lld\n", pi.dwProcessId);
+        STARTUPINFO si = {sizeof(si)}; //记录结构体有多大，必须要参数
+        si.cb = sizeof(STARTUPINFO);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.wShowWindow = SW_HIDE; // 隐藏窗口
+        si.hStdInput = (HANDLE) listen_fd; // 用于设定供控制台输入和输出用的缓存的句柄。按照默认设置，hStdInput 用于标识键盘缓存，hStdOutput 和hStdError用于标识控制台窗口的缓存
+        si.hStdOutput = INVALID_HANDLE_VALUE;
+        si.hStdError = INVALID_HANDLE_VALUE;
+
         if (0 == CreateProcess(NULL,    // 不在此指定可执行文件的文件名
-                               CMD,// 命令行参数
+                               path,// 命令行参数
                                NULL,    // 默认进程安全性
                                NULL,    // 默认进程安全性
                                TRUE,    // 指定当前进程内句柄不可以被子进程继承
@@ -33,7 +126,7 @@ void *startProcess() {
                                NULL,    // 使用本进程的驱动器和目录
                                &si,
                                &pi)) {
-            fprintf(stderr, "failed to create process %s", CMD);
+            fprintf(stderr, "failed to create process %s", path);
             return NULL;
         }
 
@@ -69,7 +162,6 @@ void initJob() {
     // 查询作业信息
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit;
     if (!QueryInformationJobObject(FcpJobObject, JobObjectExtendedLimitInformation, &limit, sizeof(limit), NULL)) {
-        printf("%s\n","=======");
         CloseHandle(FcpJobObject);
         exit(1);
     }
@@ -84,9 +176,42 @@ void initJob() {
 
 // 程序入口
 int main(int argc, char *argv[]) {
+    if (argc == 1) usage();
+    int opt;
+    char opts[] = "hvn:i:p:u::g::r::";
+    int idx = 0;
+    path = argv[1];
+    while ((opt = getopt_long(argc, argv, opts, long_options, &idx)) != EOF) {
+        switch (opt) {
+            case 'h':
+                usage();
+                break;
+            case 'v':
+                showVersion();
+                break;
+            case 'n':
+                number = atoi(optarg);
+                if (number > MAX_PROCESSES) number = MAX_PROCESSES;
+                break;
+            case 'i':
+                ip = optarg;
+                break;
+            case 'p':
+                port = atoi(optarg);
+                break;
+            case 'u':
+                user = optarg;
+                break;
+            default:
+                printf("default");
+        }
+    }
+//    printf("number => %d ip => %s port => %d user => %s path => %s\n", number, ip, port, user, path);
     initJob();
+    listenAndBind();
+
     // 多线程执行
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < number; ++i) {
         /*
          * 参数1: 指向线程标识符的指针，type: pthread_t*
          * 参数2: 用来设置线程属性
@@ -106,7 +231,6 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < 5; ++i) {
         pthread_join(threads[i], NULL);
     }
-
 
     return 0;
 }
