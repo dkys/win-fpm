@@ -46,7 +46,6 @@ cmake-build-debug/Testing/Temporary/LastTest.log
 .idea/misc.xml
 .idea/modules.xml
 .idea/vcs.xml
-CMakeLists.txt
 hello.c----
 main--.c
 test.txt
