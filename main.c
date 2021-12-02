@@ -54,7 +54,7 @@ static void usage(FILE *where) {
 
 static void showVersion() {
     fprintf(stdout, ""
-                    "xxfpm Revision: 0.01\n"
+                    "win-fpm Revision: 0.01\n"
                     "FastCGI Process Manager\n"
                     "Copyright 2021 qq673675158\n"
                     "Compiled on %s\n", __DATE__
@@ -203,7 +203,7 @@ int main(int argc, char *argv[]) {
                 printf("default");
         }
     }
-    printf("number => %d ip => %s port => %d path => %s\n", number, ip, port, path);
+//    printf("number => %d ip => %s port => %d path => %s\n", number, ip, port, path);
     initJob();
     listenAndBind();
 
