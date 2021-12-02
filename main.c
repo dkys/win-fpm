@@ -20,10 +20,9 @@ HANDLE FcpJobObject;
 int number = 3;
 char *ip = "127.0.0.1";
 int port = 9000;
-char *user;
 char *path;
 struct sockaddr_in listen_addr;
-int listen_fd;
+SOCKET listen_fd;
 static struct option long_options[] = {
         {"help",    no_argument,       NULL, 'h'},
         {"version", no_argument,       NULL, 'v'},
@@ -37,7 +36,7 @@ static struct option long_options[] = {
 };
 
 
-static void usage() {
+static void usage(FILE *where) {
     fprintf(stdout, ""
                     "Usage: xxfpm path [-n number] [-i ip] [-p port]\n"
                     "Manage FastCGI processes.\n"
@@ -50,6 +49,7 @@ static void usage() {
 //                    " -u, --user    start processes using specified linux user\n"
 //                    " -r, --root    change root direcotry for the processes"
     );
+    exit(where == stderr ? 1 : 0);
 }
 
 static void showVersion() {
@@ -76,7 +76,7 @@ void listenAndBind() {
     }
 
     if ((listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-        fprintf(stderr, "failed socket %d\n", listen_fd);
+        fprintf(stderr, "failed socket %llu\n", listen_fd);
         exit(EXIT_FAILURE);
     }
     listen_addr.sin_family = AF_INET;
@@ -98,7 +98,7 @@ void listenAndBind() {
  * STARTF_USEFILLATTRIBUTE			//使用dwFillAttribute 成员
  * STARTF_USESTDHANDLES				//使用hStdInput 、hStdOutput 和hStdError 成员
  * STARTF_RUN_FULLSCREEN			//强制在x86 计算机上运行的控制台应用程序以全屏幕方式启动运行
- * @return
+ *
  */
 void *startProcess() {
     while (1) {
@@ -127,7 +127,7 @@ void *startProcess() {
                                &si,
                                &pi)) {
             fprintf(stderr, "failed to create process %s", path);
-            return NULL;
+            break;
         }
 
         // 将创建出的进程,加入到作业对象,由作业对象管理进程
@@ -135,7 +135,7 @@ void *startProcess() {
             TerminateProcess(pi.hProcess, 1);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
-            return NULL;
+            break;
         }
 
         // 唤醒线程
@@ -143,14 +143,12 @@ void *startProcess() {
             TerminateProcess(pi.hProcess, 1); // 立即杀死进程
             CloseHandle(pi.hProcess);// 关闭进程
             CloseHandle(pi.hThread);// 关闭线程
-            return NULL;
+            break;
         }
         WaitForSingleObject(pi.hProcess, INFINITE);// 阻塞，等待进程结束
         CloseHandle(pi.hProcess);// 关闭进程
         CloseHandle(pi.hThread);// 关闭进程的主线程
     }
-
-//    return NULL;
 }
 
 // 初始化作业对象
@@ -176,7 +174,7 @@ void initJob() {
 
 // 程序入口
 int main(int argc, char *argv[]) {
-    if (argc == 1) usage();
+    if (argc == 1) usage(stderr);
     int opt;
     char opts[] = "hvn:i:p:u::g::r::";
     int idx = 0;
@@ -184,29 +182,28 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt_long(argc, argv, opts, long_options, &idx)) != EOF) {
         switch (opt) {
             case 'h':
-                usage();
+                usage(stdout);
                 break;
             case 'v':
                 showVersion();
                 break;
             case 'n':
-                number = atoi(optarg);
+                number = strtol(optarg, NULL, 10);
+                if (number == 0) usage(stderr);
                 if (number > MAX_PROCESSES) number = MAX_PROCESSES;
                 break;
             case 'i':
                 ip = optarg;
                 break;
             case 'p':
-                port = atoi(optarg);
-                break;
-            case 'u':
-                user = optarg;
+                port = strtol(optarg, NULL, 10);
+                if (port == 0) usage(stderr);
                 break;
             default:
                 printf("default");
         }
     }
-//    printf("number => %d ip => %s port => %d user => %s path => %s\n", number, ip, port, user, path);
+    printf("number => %d ip => %s port => %d path => %s\n", number, ip, port, path);
     initJob();
     listenAndBind();
 
